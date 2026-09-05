@@ -1,0 +1,17 @@
+{
+  "pure_ascii": {
+    "simple": " .:-=+*#%@",
+    "normal": " .,:;irsXA253hMHGS#9B&@/\\|_()-[]{}<>",
+    "detailed": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+  },
+  "unicode": {
+    "simple": " ･·˙:｡○●─│╱╲",
+    "normal": " ･·˙…:;､ﾟ°｡。○◯●◉◎─│┌┐└┘╭╮╰╯╱╲／＼︵︶（）〈〉△▽◇◆☆♡",
+    "detailed": " ･·˙…:;､ﾟ°｡。○◯●◉◎◌─━│┃┌┐└┘├┤┬┴┼╭╮╰╯╱╲／＼︵︶（）〈〉《》△▽◇◆☆★♡♥░▒▓█▀▄▌▐"
+  },
+  "block": {
+    "simple": " ░▒▓█",
+    "normal": " ░▒▓█▀▄▌▐",
+    "detailed": " ▏▎▍▌▋▊▉█▔▀▄▁▂▃▅▆▇░▒▓"
+  }
+}

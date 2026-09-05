@@ -1,0 +1,119 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) * .6);
+  --radius-md: calc(var(--radius) * .8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.35);
+}
+
+:root {
+  --background: #f7f3eb;
+  --foreground: #1e2526;
+  --card: #fffdf8;
+  --card-foreground: #1e2526;
+  --popover: #fffdf8;
+  --popover-foreground: #1e2526;
+  --primary: #ed5b36;
+  --primary-foreground: #fffaf3;
+  --secondary: #176763;
+  --secondary-foreground: #f3fffc;
+  --muted: #e9e4da;
+  --muted-foreground: #6d7472;
+  --accent: #dcebe7;
+  --accent-foreground: #164c4d;
+  --destructive: #c53d31;
+  --border: #d8d2c8;
+  --input: #cbc5ba;
+  --ring: #ed5b36;
+  --ink: #1e2526;
+  --radius: .6rem;
+}
+
+.dark {
+  --background: #172020;
+  --foreground: #f4f0e8;
+  --card: #1d2928;
+  --card-foreground: #f4f0e8;
+  --popover: #1d2928;
+  --popover-foreground: #f4f0e8;
+  --primary: #ff7350;
+  --primary-foreground: #181f20;
+  --secondary: #72d0c1;
+  --secondary-foreground: #112524;
+  --muted: #293635;
+  --muted-foreground: #a7b4b1;
+  --accent: #263f3d;
+  --accent-foreground: #d9fbf4;
+  --destructive: #ff7162;
+  --border: #354241;
+  --input: #445150;
+  --ring: #ff7350;
+  --ink: #090d0d;
+}
+
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  html { @apply font-sans; }
+  body { @apply bg-background text-foreground; }
+  button, select, input, textarea { font: inherit; }
+}
+
+body {
+  background-image: radial-gradient(circle at 1px 1px, rgb(30 37 38 / 5%) 1px, transparent 0);
+  background-size: 18px 18px;
+}
+
+.lab-grid { display: grid; grid-template-columns: 310px minmax(430px, 1fr) 300px; }
+.step-chip { display: grid; height: 28px; min-width: 28px; place-items: center; border: 1px solid var(--foreground); border-radius: 6px; font: 700 10px var(--font-geist-mono); box-shadow: 2px 2px 0 var(--foreground); }
+.control-group { display: flex; flex-direction: column; gap: 8px; }
+.control-label { font: 700 10px var(--font-geist-mono); letter-spacing: .13em; text-transform: uppercase; color: var(--muted-foreground); }
+.upload-zone { display: flex; width: 100%; align-items: center; justify-content: center; gap: 12px; border: 1px dashed var(--input); border-radius: 10px; background: color-mix(in srgb, var(--background) 70%, transparent); padding: 14px; text-align: left; transition: border-color .2s, background .2s; }
+.upload-zone:hover { border-color: var(--primary); background: var(--background); }
+.upload-zone strong, .upload-zone small { display: block; }
+.upload-zone strong { font-size: 12px; }
+.upload-zone small { margin-top: 2px; font-size: 10px; color: var(--muted-foreground); }
+.aa-stage { overflow: hidden; min-height: 500px; border: 1px solid #0a0e0f; border-radius: 12px; background: #111718; box-shadow: 6px 6px 0 rgb(30 37 38 / 18%); }
+.stage-toolbar, .stage-footer { display: flex; align-items: center; justify-content: space-between; border-color: rgb(255 255 255 / 8%); padding: 11px 14px; color: rgb(255 255 255 / 52%); }
+.stage-toolbar { border-bottom-width: 1px; }
+.stage-footer { border-top-width: 1px; font: 500 10px var(--font-geist-mono); }
+.traffic { display: block; width: 8px; height: 8px; border-radius: 999px; }
+.aa-output { min-height: 432px; overflow: auto; padding: 54px 20px 32px; color: #ecf4ef; font: 500 clamp(9px, .86vw, 13px)/1.18 var(--font-geist-mono), monospace; text-align: center; text-shadow: 0 0 16px rgb(117 216 199 / 12%); white-space: pre; }
+.checkerboard { background-color: #f7f4ed; background-image: linear-gradient(45deg,#e4dfd5 25%,transparent 25%),linear-gradient(-45deg,#e4dfd5 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#e4dfd5 75%),linear-gradient(-45deg,transparent 75%,#e4dfd5 75%); background-size: 16px 16px; background-position: 0 0,0 8px,8px -8px,-8px 0; }
+.metric-block { border-left: 3px solid var(--primary); padding: 2px 0 2px 14px; }
+.metric-row { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; }
+.metric-row dt { color: var(--muted-foreground); }
+.metric-row dd { font-family: var(--font-geist-mono); font-weight: 600; }
+.segment-control { display: inline-flex; align-items: center; gap: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--background); padding: 2px; }
+.segment-control button { display: inline-flex; height: 27px; align-items: center; gap: 4px; border-radius: 5px; padding: 0 8px; color: var(--muted-foreground); font-size: 10px; font-weight: 650; transition: background .18s, color .18s; }
+.segment-control button:hover { color: var(--foreground); }
+.segment-control button[data-active='true'] { background: var(--foreground); color: var(--background); }
+.segment-control.compact button { height: 23px; padding-inline: 6px; font-size: 9px; }
+.segment-control.compact svg { width: 11px; height: 11px; }
+
+@media (max-width: 1100px) { .lab-grid { grid-template-columns: 290px minmax(0, 1fr); } .lab-grid > aside:last-child { grid-column: 1 / -1; display: grid; grid-template-columns: 200px 1fr; gap: 24px; } }
+@media (max-width: 760px) { .lab-grid { display: block; } .lab-grid > aside:last-child { display: block; } .aa-stage { min-height: 420px; } .aa-output { min-height: 350px; padding-top: 44px; } }
