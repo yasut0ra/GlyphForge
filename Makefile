@@ -12,7 +12,7 @@ build:
 	cd frontend && npm run build
 
 api:
-	cd backend && .venv/bin/uvicorn app.main:app --reload --port 8000
+	cd backend && .venv/bin/uvicorn app.main:app --reload --env-file .env --port 8000
 
 web:
 	cd frontend && npm run dev

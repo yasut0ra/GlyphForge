@@ -3,6 +3,12 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.config import load_backend_environment
+
+
+# Load backend/.env before routes construct the default provider pipeline.
+load_backend_environment()
+
 from app.api.routes import router
 
 

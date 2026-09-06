@@ -134,14 +134,7 @@ reconstruction_loss =
 cp backend/.env.example backend/.env
 ```
 
-`backend/.env` に以下を設定し、`backend` ディレクトリで環境を読み込んで起動します。
-
-```bash
-set -a
-source .env
-set +a
-.venv/bin/uvicorn app.main:app --reload --port 8000
-```
+`backend/.env` に以下を設定します。`make api` とバックエンド本体の両方がこのファイルを自動で読み込むため、`source .env` は不要です。
 
 ```dotenv
 OPENAI_API_KEY=...
