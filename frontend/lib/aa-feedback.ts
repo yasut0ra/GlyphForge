@@ -44,6 +44,91 @@ export interface BrowserCapture {
   dataUrl: string;
 }
 
+export type CopyProfile = 'notes_docs' | 'monospace';
+
+export function normalizeAAForCopy(value: string): string {
+  const lines = value.replaceAll('\r\n', '\n').split('\n');
+  while (lines.length > 0 && lines[0].trim().length === 0) lines.shift();
+  while (lines.length > 0 && lines.at(-1)?.trim().length === 0) lines.pop();
+  const contentLines = lines.filter((line) => line.trim().length > 0);
+  const commonIndent = contentLines.length > 0
+    ? Math.min(...contentLines.map((line) => line.match(/^ */)?.[0].length ?? 0))
+    : 0;
+  return lines.map((line) => line.slice(commonIndent).trimEnd()).join('\n');
+}
+
+export function prepareAAForCopy(value: string, profile: CopyProfile): string {
+  const normalized = normalizeAAForCopy(value);
+  if (profile === 'monospace' || normalized.length === 0) return normalized;
+
+  // Notes/Docs commonly render a monospace advance around 0.41× line-height,
+  // while the optimizer uses 12/22 ≈ 0.545. Nearest-neighbor column expansion
+  // preserves the source grid when the destination's cells are narrower.
+  const scale = 1.32;
+  const lines = normalized.split('\n');
+  const sourceWidth = Math.max(...lines.map((line) => Array.from(line).length));
+  const targetWidth = Math.max(1, Math.round(sourceWidth * scale));
+  return lines.map((line) => {
+    const source = Array.from(line.padEnd(sourceWidth, ' '));
+    let expanded = '';
+    for (let column = 0; column < targetWidth; column += 1) {
+      expanded += source[Math.min(sourceWidth - 1, Math.floor(column / scale))];
+    }
+    return expanded.trimEnd();
+  }).join('\n');
+}
+
+function escapeHTML(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+export async function copyAAWithMonospaceFormatting(
+  value: string,
+  profile: CopyProfile,
+): Promise<'rich' | 'plain'> {
+  const richContent = escapeHTML(value)
+    .replaceAll(' ', '&nbsp;')
+    .replaceAll('\n', '<br>');
+  const typography = profile === 'notes_docs'
+    ? 'line-height:1.45;letter-spacing:0;'
+    : 'line-height:1.2222;letter-spacing:.064em;';
+  const html = [
+    '<div style="',
+    "margin:0;white-space:pre;font-family:Menlo,Monaco,Consolas,'DejaVu Sans Mono',monospace;",
+    `font-size:12px;font-weight:400;${typography}`,
+    '">',
+    richContent,
+    '</div>',
+  ].join('');
+  if (navigator.clipboard.write && typeof ClipboardItem !== 'undefined') {
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/plain': new Blob([value], { type: 'text/plain;charset=utf-8' }),
+          'text/html': new Blob([html], { type: 'text/html;charset=utf-8' }),
+        }),
+      ]);
+      return 'rich';
+    } catch {
+      // Fall through to the legacy copy event, which still supports text/html.
+    }
+  }
+  await navigator.clipboard.writeText(value);
+  return 'plain';
+}
+
+export async function copyPNGToClipboard(blob: Blob): Promise<void> {
+  if (!navigator.clipboard.write || typeof ClipboardItem === 'undefined') {
+    throw new Error('このブラウザは画像のクリップボードコピーに対応していません。');
+  }
+  await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+}
+
 function canvasBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {

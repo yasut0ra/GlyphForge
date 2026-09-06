@@ -27,9 +27,13 @@ import { Progress, ProgressLabel, ProgressValue } from '@/components/ui/progress
 import { Textarea } from '@/components/ui/textarea';
 import {
   captureBrowserAA,
+  copyAAWithMonospaceFormatting,
+  copyPNGToClipboard,
   dataUrlToBlob,
   evaluateScreenshot,
+  prepareAAForCopy,
   requestRefinement,
+  type CopyProfile,
 } from '@/lib/aa-feedback';
 
 type Style = 'pure_ascii' | 'unicode' | 'block';
@@ -173,17 +177,21 @@ export default function Home() {
   const [result, setResult] = useState<GenerationResult>(defaultResult);
   const [outputView, setOutputView] = useState<OutputView>('optimized');
   const [previewView, setPreviewView] = useState<PreviewView>('reference');
+  const [copyProfile, setCopyProfile] = useState<CopyProfile>('notes_docs');
   const [loading, setLoading] = useState(false);
   const [improving, setImproving] = useState(false);
   const [error, setError] = useState('');
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<'aa' | 'png' | null>(null);
   const [hasGenerated, setHasGenerated] = useState(false);
   const [feedbackIterations, setFeedbackIterations] = useState<FeedbackIteration[]>([]);
   const [improvementStatus, setImprovementStatus] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
   const aaOutput = useRef<HTMLPreElement>(null);
 
-  const shownAA = outputView === 'optimized' ? result.optimized_aa : result.initial_aa;
+  const sourceAA = outputView === 'optimized' ? result.optimized_aa : result.initial_aa;
+  const shownAA = prepareAAForCopy(sourceAA, copyProfile);
+  const copyWidth = Math.max(0, ...shownAA.split('\n').map((line) => line.length));
+  const copyHeight = shownAA.length > 0 ? shownAA.split('\n').length : 0;
   const shownPreview = previewView === 'reference'
     ? result.reference_image
     : outputView === 'optimized'
@@ -213,7 +221,7 @@ export default function Home() {
     }
     setLoading(true);
     setError('');
-    setCopied(false);
+    setCopied(null);
     const body = new FormData();
     body.set('prompt', prompt.trim());
     body.set('width', String(width));
@@ -240,16 +248,33 @@ export default function Home() {
   }
 
   async function copyAA() {
-    await navigator.clipboard.writeText(shownAA);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1800);
+    try {
+      await copyAAWithMonospaceFormatting(shownAA, copyProfile);
+      setCopied('aa');
+      window.setTimeout(() => setCopied(null), 1800);
+    } catch {
+      setError('AAをクリップボードへコピーできませんでした。');
+    }
+  }
+
+  async function copyPNG() {
+    if (!aaOutput.current) return;
+    try {
+      const capture = await captureBrowserAA(shownAA, aaOutput.current);
+      await copyPNGToClipboard(capture.blob);
+      setCopied('png');
+      window.setTimeout(() => setCopied(null), 1800);
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : '画像をコピーできませんでした。';
+      setError(message);
+    }
   }
 
   async function improveWithScreenshot() {
     if (!aaOutput.current || !hasGenerated) return;
     setImproving(true);
     setError('');
-    setCopied(false);
+    setCopied(null);
     setOutputView('optimized');
     setPreviewView('rendered');
     setFeedbackIterations([]);
@@ -257,7 +282,10 @@ export default function Home() {
     try {
       const reference = await dataUrlToBlob(result.reference_image);
       let best = result;
-      let capture = await captureBrowserAA(best.optimized_aa, aaOutput.current);
+      let capture = await captureBrowserAA(
+        prepareAAForCopy(best.optimized_aa, copyProfile),
+        aaOutput.current,
+      );
       let evaluated = await evaluateScreenshot(API_URL, best.plan, capture.blob, reference);
       let bestFeedback = evaluated.evaluation;
       let bestScore = feedbackScore(
@@ -288,7 +316,10 @@ export default function Home() {
           feedback: bestFeedback,
           reference,
         });
-        capture = await captureBrowserAA(candidate.optimized_aa, aaOutput.current);
+        capture = await captureBrowserAA(
+          prepareAAForCopy(candidate.optimized_aa, copyProfile),
+          aaOutput.current,
+        );
         evaluated = await evaluateScreenshot(API_URL, best.plan, capture.blob, reference);
         const candidateScore = feedbackScore(
           evaluated.objective_score,
@@ -486,16 +517,28 @@ export default function Home() {
               <span className="step-chip">02</span>
               <div>
                 <h2 className="font-semibold tracking-tight">Generated output</h2>
-                <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{result.grid_width} × {result.grid_height} cells · {styleLabels[style]}</p>
+                <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{copyWidth} × {copyHeight} copy · {result.grid_width} × {result.grid_height} grid · {styleLabels[style]}</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <NativeSelect
+                aria-label="貼り付け先プロファイル"
+                value={copyProfile}
+                onChange={(event) => setCopyProfile(event.target.value as CopyProfile)}
+                className="h-8 w-36 bg-background text-[10px]"
+              >
+                <NativeSelectOption value="notes_docs">Notes / Docs</NativeSelectOption>
+                <NativeSelectOption value="monospace">Code / Terminal</NativeSelectOption>
+              </NativeSelect>
               <div className="segment-control" aria-label="出力比較">
                 <button type="button" data-active={outputView === 'initial'} onClick={() => setOutputView('initial')}>Initial</button>
                 <button type="button" data-active={outputView === 'optimized'} onClick={() => setOutputView('optimized')}>Optimized</button>
               </div>
-              <Button variant="outline" size="sm" className="bg-background" onClick={copyAA}>
-                {copied ? <Check /> : <Clipboard />} {copied ? 'Copied' : 'Copy AA'}
+              <Button variant="outline" size="sm" className="bg-background" onClick={copyAA} title="等幅書式付きテキストとしてコピー">
+                {copied === 'aa' ? <Check /> : <Clipboard />} {copied === 'aa' ? 'Copied' : 'Copy AA'}
+              </Button>
+              <Button variant="outline" size="sm" className="bg-background" onClick={copyPNG} title="表示を崩さないPNG画像としてコピー">
+                {copied === 'png' ? <Check /> : <ImageIcon />} {copied === 'png' ? 'Copied' : 'Copy PNG'}
               </Button>
             </div>
           </div>
@@ -506,15 +549,18 @@ export default function Home() {
               <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-white/45">{outputView}.txt</span>
               <span className="rounded bg-white/10 px-2 py-1 font-mono text-[9px] text-white/55">100%</span>
             </div>
-            <pre
-              ref={aaOutput}
-              className="aa-output"
-              aria-label={`生成された${result.plan.subject}のAA`}
-              style={{ fontSize: result.grid_width > 90 ? '6px' : result.grid_width > 60 ? '8px' : undefined }}
-            >{shownAA}</pre>
+            <div className="aa-viewport">
+              <pre
+                ref={aaOutput}
+                className="aa-output"
+                data-copy-profile={copyProfile}
+                aria-label={`生成された${result.plan.subject}のAA`}
+                style={{ fontSize: result.grid_width > 90 ? '6px' : result.grid_width > 60 ? '8px' : undefined }}
+              >{shownAA}</pre>
+            </div>
             <div className="stage-footer">
               <span className="flex items-center gap-1.5"><Check className="size-3.5 text-[#75d8c7]" /> {outputView === 'optimized' ? 'Optimization complete' : 'Initial reconstruction'}</span>
-              <span>{result.metrics.number_of_characters.toLocaleString()} glyphs</span>
+              <span>copy-ready · common margin removed</span>
             </div>
             {(loading || improving) && (
               <div className="absolute inset-0 grid place-items-center bg-[#111718]/85 backdrop-blur-[2px]">
