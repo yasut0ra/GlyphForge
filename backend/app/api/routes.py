@@ -1,11 +1,19 @@
 from __future__ import annotations
 
-from io import BytesIO
-
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from PIL import Image, UnidentifiedImageError
+from pydantic import ValidationError
 
-from app.models.schemas import DetailLevel, GenerationResponse, Style, VisualPlan
+from app.api.uploads import read_upload_image
+from app.feedback_service import FeedbackLoopService
+from app.models.schemas import (
+    DetailLevel,
+    GenerationResponse,
+    RefinementResponse,
+    ScreenshotAssessment,
+    ScreenshotEvaluationResponse,
+    Style,
+    VisualPlan,
+)
 from app.planner.heuristic import HeuristicPlanner
 from app.planner.openai_provider import OpenAIPlanner
 from app.service import Pipeline
@@ -13,6 +21,7 @@ from app.service import Pipeline
 
 router = APIRouter(prefix="/api")
 pipeline = Pipeline.default()
+feedback_loop = FeedbackLoopService.default()
 
 
 @router.get("/health")
@@ -39,19 +48,46 @@ async def generate(
     detail: DetailLevel = Form(DetailLevel.NORMAL),
     image: UploadFile | None = File(None),
 ) -> GenerationResponse:
-    uploaded = None
-    if image is not None:
-        if image.content_type and not image.content_type.startswith("image/"):
-            raise HTTPException(status_code=415, detail="アップロードできるのは画像ファイルです。")
-        contents = await image.read()
-        if len(contents) > 12 * 1024 * 1024:
-            raise HTTPException(status_code=413, detail="画像は12MB以下にしてください。")
-        try:
-            uploaded = Image.open(BytesIO(contents))
-            uploaded.load()
-        except (UnidentifiedImageError, OSError) as exc:
-            raise HTTPException(status_code=400, detail="画像を読み取れませんでした。") from exc
+    uploaded = await read_upload_image(image) if image is not None else None
     try:
         return pipeline.generate(prompt, width, style, detail, uploaded)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"AA生成に失敗しました: {exc}") from exc
+
+
+@router.post("/evaluate-screenshot", response_model=ScreenshotEvaluationResponse)
+async def evaluate_screenshot(
+    plan: str = Form(...),
+    screenshot: UploadFile = File(...),
+    reference: UploadFile = File(...),
+) -> ScreenshotEvaluationResponse:
+    try:
+        visual_plan = VisualPlan.model_validate_json(plan)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="Visual Planを読み取れませんでした。") from exc
+    screenshot_image = await read_upload_image(screenshot)
+    reference_image = await read_upload_image(reference)
+    return feedback_loop.evaluate(visual_plan, screenshot_image, reference_image)
+
+
+@router.post("/refine", response_model=RefinementResponse)
+async def refine(
+    aa: str = Form(...),
+    width: int = Form(..., ge=20, le=120),
+    style: Style = Form(...),
+    detail: DetailLevel = Form(...),
+    round_number: int = Form(..., ge=1, le=3),
+    feedback: str = Form(...),
+    reference: UploadFile = File(...),
+) -> RefinementResponse:
+    try:
+        assessment = ScreenshotAssessment.model_validate_json(feedback)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="Screenshot評価を読み取れませんでした。") from exc
+    reference_image = await read_upload_image(reference)
+    try:
+        return feedback_loop.refine(aa, reference_image, width, style, detail, round_number, assessment)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"AA改善に失敗しました: {exc}") from exc

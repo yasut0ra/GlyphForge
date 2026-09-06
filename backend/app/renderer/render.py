@@ -24,6 +24,19 @@ def grid_to_text(indices: np.ndarray, glyphs: GlyphSet) -> str:
     return "\n".join("".join(glyphs.chars[index] for index in row) for row in indices)
 
 
+def text_to_grid(text_value: str, glyphs: GlyphSet, width: int, rows: int) -> np.ndarray:
+    """Convert a validated fixed-width AA string back into glyph indices."""
+
+    lines = text_value.splitlines()
+    if len(lines) != rows or any(len(line) != width for line in lines):
+        raise ValueError(f"AA must contain exactly {rows} rows of {width} characters")
+    lookup = {char: index for index, char in enumerate(glyphs.chars)}
+    unknown = sorted({char for line in lines for char in line if char not in lookup})
+    if unknown:
+        raise ValueError(f"AA contains characters outside the selected charset: {''.join(unknown)}")
+    return np.asarray([[lookup[char] for char in line] for line in lines], dtype=np.int16)
+
+
 def ink_array_to_data_url(image: np.ndarray, scale: int = 2) -> str:
     pixels = np.clip((1.0 - image) * 255.0, 0, 255).astype(np.uint8)
     pil = Image.fromarray(pixels, mode="L")

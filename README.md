@@ -52,6 +52,9 @@ HillClimbOptimizer ── 1 glyph replacement in 3×3 neighborhoods
         │
         ▼
 optimized AA + rendered preview + metrics
+        │
+        ▼
+browser capture → ScreenshotEvaluator → feedback-guided refinement (最大2回)
 ```
 
 ```text
@@ -64,7 +67,7 @@ backend/
     glyphs/                   charset config, glyph rasterization, descriptors
     renderer/                 preprocessing, matching, re-rendering, loss
     optimizer/                Optimizer interface + hill climbing
-    evaluator/                SemanticEvaluator interface + structural proxy
+    evaluator/                SemanticEvaluator + ScreenshotEvaluator（local/OpenAI）
     models/                   API schemas
     service.py                end-to-end orchestration
   config/charsets.json        style/detail-specific configurable charsets
@@ -140,9 +143,11 @@ cp backend/.env.example backend/.env
 OPENAI_API_KEY=...
 OPENAI_PLANNER_MODEL=gpt-5.4-mini
 OPENAI_IMAGE_MODEL=gpt-image-1
+OPENAI_EVALUATOR_MODEL=gpt-5.4-mini
 ```
 
 - `OPENAI_API_KEY` あり: Responses APIのStructured OutputsでVisual Planを作り、画像未指定時はImages APIで参照線画を生成します。
+- Screenshot改善では、ブラウザと同じfont/line-heightでCanvasへ再描画したAAと参照画像をマルチモーダル評価します。評価器はAAを直接書き換えず、構造化されたスコア・問題領域・改善指示だけを返します。
 - キーなし: local heuristic planner + offline procedural line artを使います。
 - 画像アップロードあり: 画像生成providerを使わず、その画像から後続処理を実行します。
 - 外部APIに失敗した場合もローカルproviderへフォールバックします。
@@ -157,6 +162,8 @@ FastAPIの対話ドキュメントは `http://localhost:8000/docs` です。
 GET  /api/health
 POST /api/plan       multipart: prompt, width, style, detail
 POST /api/generate   multipart: prompt, width, style, detail, image?
+POST /api/evaluate-screenshot  multipart: plan, screenshot, reference
+POST /api/refine               multipart: aa, width, style, detail, round_number, feedback, reference
 ```
 
 `style` は `pure_ascii | unicode | block`、`detail` は `simple | normal | detailed` です。幅は20〜120文字、画像は12MBまでです。
@@ -177,6 +184,8 @@ make build
 ```
 
 テストは幅保持、charset制約、画像→AA→画像、最適化後lossが初期loss以下であることを検証します。
+
+UIの「Screenshotで2回改善」は、baselineを評価した後、問題領域を優先したglyph候補拡張と局所探索を最大2回行います。各候補をブラウザで再キャプチャし、reconstruction lossが改善し、再現可能なbrowser構造評価・edge・SSIMの複合スコアが許容範囲内にある候補だけを採用します。VLMの絶対スコアは候補間で揺れる可能性があるため、意味的な指摘と重点領域の決定に使い、採否判定とは分離しています。
 
 ## MVPの制約と今後の改善
 

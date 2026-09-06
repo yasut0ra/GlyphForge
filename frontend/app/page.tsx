@@ -3,6 +3,7 @@
 import {
   AlertCircle,
   ArrowRight,
+  Camera,
   Check,
   CheckCircle2,
   Clipboard,
@@ -10,6 +11,7 @@ import {
   ImagePlus,
   Layers3,
   LoaderCircle,
+  RefreshCw,
   ScanLine,
   Sparkles,
   X,
@@ -23,6 +25,12 @@ import { Input } from '@/components/ui/input';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Progress, ProgressLabel, ProgressValue } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  captureBrowserAA,
+  dataUrlToBlob,
+  evaluateScreenshot,
+  requestRefinement,
+} from '@/lib/aa-feedback';
 
 type Style = 'pure_ascii' | 'unicode' | 'block';
 type Detail = 'simple' | 'normal' | 'detailed';
@@ -61,6 +69,16 @@ interface GenerationResult {
   grid_width: number;
   grid_height: number;
   providers: Record<string, string>;
+}
+
+interface FeedbackIteration {
+  round: number;
+  score: number;
+  accepted: boolean;
+  changedCharacters: number;
+  screenshot: string;
+  evaluator: string;
+  summary: string;
 }
 
 const sampleOptimized = `
@@ -131,6 +149,21 @@ function formatLoss(value: number) {
   return value.toFixed(6);
 }
 
+function feedbackScore(
+  objectiveScore: number,
+  reconstructionLoss: number,
+  ssim: number,
+  edgeSimilarity: number,
+) {
+  const reconstruction = Math.max(0, 1 - Math.min(1, reconstructionLoss * 4));
+  return (
+    0.55 * objectiveScore +
+    0.2 * edgeSimilarity +
+    0.15 * ssim +
+    0.1 * reconstruction
+  );
+}
+
 export default function Home() {
   const [prompt, setPrompt] = useState('猫の顔を横幅40文字で作って');
   const [width, setWidth] = useState(40);
@@ -141,9 +174,14 @@ export default function Home() {
   const [outputView, setOutputView] = useState<OutputView>('optimized');
   const [previewView, setPreviewView] = useState<PreviewView>('reference');
   const [loading, setLoading] = useState(false);
+  const [improving, setImproving] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [hasGenerated, setHasGenerated] = useState(false);
+  const [feedbackIterations, setFeedbackIterations] = useState<FeedbackIteration[]>([]);
+  const [improvementStatus, setImprovementStatus] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
+  const aaOutput = useRef<HTMLPreElement>(null);
 
   const shownAA = outputView === 'optimized' ? result.optimized_aa : result.initial_aa;
   const shownPreview = previewView === 'reference'
@@ -190,6 +228,9 @@ export default function Home() {
       setResult(payload as GenerationResult);
       setOutputView('optimized');
       setPreviewView('rendered');
+      setHasGenerated(true);
+      setFeedbackIterations([]);
+      setImprovementStatus('');
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : 'バックエンドに接続できませんでした。';
       setError(`${message} FastAPI が localhost:8000 で起動しているか確認してください。`);
@@ -202,6 +243,114 @@ export default function Home() {
     await navigator.clipboard.writeText(shownAA);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1800);
+  }
+
+  async function improveWithScreenshot() {
+    if (!aaOutput.current || !hasGenerated) return;
+    setImproving(true);
+    setError('');
+    setCopied(false);
+    setOutputView('optimized');
+    setPreviewView('rendered');
+    setFeedbackIterations([]);
+
+    try {
+      const reference = await dataUrlToBlob(result.reference_image);
+      let best = result;
+      let capture = await captureBrowserAA(best.optimized_aa, aaOutput.current);
+      let evaluated = await evaluateScreenshot(API_URL, best.plan, capture.blob, reference);
+      let bestFeedback = evaluated.evaluation;
+      let bestScore = feedbackScore(
+        evaluated.objective_score,
+        best.metrics.optimized_reconstruction_loss,
+        best.metrics.ssim,
+        best.metrics.edge_similarity,
+      );
+      const history: FeedbackIteration[] = [{
+        round: 0,
+        score: bestScore,
+        accepted: true,
+        changedCharacters: 0,
+        screenshot: capture.dataUrl,
+        evaluator: evaluated.evaluator,
+        summary: bestFeedback.summary,
+      }];
+      setFeedbackIterations([...history]);
+
+      for (let round = 1; round <= 2; round += 1) {
+        setImprovementStatus(`スクリーンショット評価から改善中 ${round}/2`);
+        const candidate = await requestRefinement(API_URL, {
+          aa: best.optimized_aa,
+          width: best.grid_width,
+          style,
+          detail,
+          roundNumber: round,
+          feedback: bestFeedback,
+          reference,
+        });
+        capture = await captureBrowserAA(candidate.optimized_aa, aaOutput.current);
+        evaluated = await evaluateScreenshot(API_URL, best.plan, capture.blob, reference);
+        const candidateScore = feedbackScore(
+          evaluated.objective_score,
+          candidate.reconstruction_loss,
+          candidate.ssim,
+          candidate.edge_similarity,
+        );
+        // The backend only returns globally improving moves, but losses are rounded to 6 decimals.
+        const reconstructionImproved =
+          candidate.reconstruction_loss <= candidate.previous_reconstruction_loss + 1e-6;
+        const browserScoreStable = candidateScore + 0.03 >= bestScore;
+        const accepted =
+          candidate.changed_characters > 0 && reconstructionImproved && browserScoreStable;
+        history.push({
+          round,
+          score: candidateScore,
+          accepted,
+          changedCharacters: candidate.changed_characters,
+          screenshot: capture.dataUrl,
+          evaluator: evaluated.evaluator,
+          summary: evaluated.evaluation.summary,
+        });
+        setFeedbackIterations([...history]);
+
+        if (accepted) {
+          bestScore = candidateScore;
+          bestFeedback = evaluated.evaluation;
+          best = {
+            ...best,
+            optimized_aa: candidate.optimized_aa,
+            optimized_preview: candidate.optimized_preview,
+            grid_height: candidate.grid_height,
+            providers: { ...best.providers, semantic: evaluated.evaluator },
+            metrics: {
+              ...best.metrics,
+              optimized_reconstruction_loss: candidate.reconstruction_loss,
+              optimization_iterations:
+                best.metrics.optimization_iterations + candidate.optimization_iterations,
+              optimization_evaluations:
+                best.metrics.optimization_evaluations + candidate.optimization_evaluations,
+              ssim: candidate.ssim,
+              edge_similarity: candidate.edge_similarity,
+              semantic_score: evaluated.evaluation.overall_score,
+            },
+          };
+          setResult(best);
+        }
+        if (candidate.changed_characters === 0) break;
+      }
+      const acceptedCount = history.filter((entry) => entry.round > 0 && entry.accepted).length;
+      setImprovementStatus(
+        acceptedCount > 0
+          ? `${acceptedCount}回の改善を採用しました`
+          : '最高スコアを維持しました（悪化候補は不採用）',
+      );
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : 'スクリーンショット改善に失敗しました。';
+      setError(message);
+      setImprovementStatus('');
+    } finally {
+      setImproving(false);
+    }
   }
 
   return (
@@ -358,6 +507,7 @@ export default function Home() {
               <span className="rounded bg-white/10 px-2 py-1 font-mono text-[9px] text-white/55">100%</span>
             </div>
             <pre
+              ref={aaOutput}
               className="aa-output"
               aria-label={`生成された${result.plan.subject}のAA`}
               style={{ fontSize: result.grid_width > 90 ? '6px' : result.grid_width > 60 ? '8px' : undefined }}
@@ -366,12 +516,12 @@ export default function Home() {
               <span className="flex items-center gap-1.5"><Check className="size-3.5 text-[#75d8c7]" /> {outputView === 'optimized' ? 'Optimization complete' : 'Initial reconstruction'}</span>
               <span>{result.metrics.number_of_characters.toLocaleString()} glyphs</span>
             </div>
-            {loading && (
+            {(loading || improving) && (
               <div className="absolute inset-0 grid place-items-center bg-[#111718]/85 backdrop-blur-[2px]">
                 <div className="text-center text-white">
                   <LoaderCircle className="mx-auto size-7 animate-spin text-[#75d8c7]" />
-                  <p className="mt-3 text-sm font-medium">Glyph candidatesを探索中</p>
-                  <p className="mt-1 font-mono text-[10px] text-white/45">pixel + edge + orientation loss</p>
+                  <p className="mt-3 text-sm font-medium">{improving ? 'Browser feedbackを反映中' : 'Glyph candidatesを探索中'}</p>
+                  <p className="mt-1 font-mono text-[10px] text-white/45">{improving ? improvementStatus : 'pixel + edge + orientation loss'}</p>
                 </div>
               </div>
             )}
@@ -441,6 +591,44 @@ export default function Home() {
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {result.plan.important_features.map((feature) => <Badge key={feature} variant="outline" className="rounded font-mono text-[9px]">{feature}</Badge>)}
               </div>
+            </div>
+
+            <div className="rounded-lg border bg-background p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="control-label">Visual feedback loop</p>
+                  <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">実ブラウザ描画を評価し、最大2回だけ再探索します。</p>
+                </div>
+                <Camera className="size-4 shrink-0 text-secondary" />
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="mt-3 w-full"
+                disabled={!hasGenerated || loading || improving}
+                onClick={improveWithScreenshot}
+              >
+                {improving ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
+                {improving ? '評価・改善中…' : 'Screenshotで2回改善'}
+              </Button>
+              {!hasGenerated && <p className="mt-2 text-center text-[9px] text-muted-foreground">まずAAを生成してください</p>}
+              {improvementStatus && !improving && <p className="mt-2 text-[10px] font-medium text-secondary">{improvementStatus}</p>}
+              {feedbackIterations.length > 0 && (
+                <div className="mt-3 space-y-2 border-t pt-3">
+                  {feedbackIterations.map((entry) => (
+                    <div key={entry.round} className="flex items-center gap-2 text-[10px]">
+                      <span className="grid size-5 place-items-center rounded bg-muted font-mono">{entry.round}</span>
+                      <span className="flex-1 truncate">{entry.round === 0 ? 'Baseline' : `${entry.changedCharacters} glyph changes`}</span>
+                      <span className="font-mono font-semibold">{(entry.score * 100).toFixed(1)}</span>
+                      <Badge variant={entry.accepted ? 'default' : 'outline'} className="rounded px-1.5 py-0 text-[8px]">
+                        {entry.accepted ? 'KEEP' : 'DROP'}
+                      </Badge>
+                    </div>
+                  ))}
+                  <p className="line-clamp-2 text-[9px] leading-relaxed text-muted-foreground">{feedbackIterations.at(-1)?.summary}</p>
+                </div>
+              )}
             </div>
           </div>
         </aside>
