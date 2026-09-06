@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/yasut0ra/GlyphForge/security
+    about: セキュリティ上の問題は公開Issueではなく、Securityタブから報告してください。

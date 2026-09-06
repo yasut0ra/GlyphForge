@@ -1,6 +1,21 @@
 # GlyphForge — Shape-aware ASCII Art Lab
 
+[![CI](https://github.com/yasut0ra/GlyphForge/actions/workflows/ci.yml/badge.svg)](https://github.com/yasut0ra/GlyphForge/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 自然言語またはアップロード画像から、glyphの**形**を比較して ASCII Art / AA を作るローカルMVPです。LLMに完成AAを直接書かせず、Visual Planと参照線画を経由し、最終AAを固定幅フォントで再描画して損失を最適化します。
+
+![GlyphForge — Shape-aware ASCII Art Lab](frontend/public/og.png)
+
+## 主な特徴
+
+- 自然言語をVisual Planへ変換し、LLMに最終AAを直接生成させない設計
+- glyph画像のpixel・density・edge・orientationを使った形状マッチング
+- AAを固定幅フォントで再レンダリングし、3×3近傍のhill climbingで改善
+- Pure ASCII / Unicode AA / Block Artを切り替え可能
+- APIキーなしでも画像アップロードとローカル参照線画でend-to-end実行可能
+- ブラウザ描画のスクリーンショット評価と最大2回のfeedback refinement
+- Notes / Docs向けのコピー縦横比補正と、崩れないPNGコピー
 
 ## クイックスタート
 
@@ -200,3 +215,11 @@ UIの「Screenshotで2回改善」は、baselineを評価した後、問題領�
 - CLIP/SigLIP/VLM evaluator、aesthetic model、complexity penaltyを統合し、複数目的Pareto探索にできます。
 - glyph間の連結性、左右対称prior、負の空間、行間をglobal constraintsとして追加できます。
 - 生成結果の保存、seed固定、custom charset編集、複数候補比較は次のUI拡張候補です。
+
+## Contributing / Security
+
+開発への参加方法は [CONTRIBUTING.md](CONTRIBUTING.md)、脆弱性の非公開報告方法は [SECURITY.md](SECURITY.md) を参照してください。
+
+## License
+
+[MIT License](LICENSE)

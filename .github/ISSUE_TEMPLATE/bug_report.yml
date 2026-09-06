@@ -1,0 +1,56 @@
+name: Bug report
+description: 再現可能な不具合を報告する
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: 報告ありがとうございます。APIキーや機密画像は添付しないでください。
+  - type: textarea
+    id: summary
+    attributes:
+      label: 概要
+      description: 何が起きたかを簡潔に記載してください。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 再現手順
+      placeholder: |
+        1. アプリを起動
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待した結果
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: 実行モード
+      options:
+        - APIキーなし（Local engine）
+        - OpenAI API使用
+        - 画像アップロードのみ
+        - その他
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 環境
+      description: OS、Python、Node.js、ブラウザのバージョン
+      placeholder: macOS 15 / Python 3.11 / Node.js 22 / Chrome
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: ログ・スクリーンショット
+      description: APIキー、個人情報、機密画像を除去して添付してください。
