@@ -17,8 +17,10 @@ from app.models.schemas import (
     ScreenshotEvaluationResponse,
     Style,
     VisualPlan,
+    RenderProfile,
 )
-from app.optimizer.hill_climb import HillClimbOptimizer
+from app.optimizer.coordinate import CoordinateOptimizer
+from app.evaluator.dummy import StructuralSemanticEvaluator
 from app.renderer.loss import reconstruction_loss
 from app.renderer.matcher import InitialMatch, match_glyphs
 from app.renderer.preprocess import prepare_target
@@ -64,8 +66,9 @@ class FeedbackLoopService:
         detail: DetailLevel,
         round_number: int,
         feedback: ScreenshotAssessment,
+        render_profile: RenderProfile = RenderProfile.MONOSPACE,
     ) -> RefinementResponse:
-        glyph_set = self.glyphs.get(style, detail)
+        glyph_set = self.glyphs.get(style, detail, render_profile)
         target, rows = prepare_target(reference, width, glyph_set.cell_width, glyph_set.cell_height)
         current_indices = text_to_grid(aa_text, glyph_set, width, rows)
         current_render = grid_to_image(current_indices, glyph_set)
@@ -103,11 +106,16 @@ class FeedbackLoopService:
             priorities[row0:row1, col0:col1] *= 1.0 + 3.0 * region.priority
 
         seed = InitialMatch(indices=current_indices, candidates=candidates, cell_losses=priorities)
-        optimized = HillClimbOptimizer(max_passes=min(5, round_number + 2)).optimize(
+        optimized = CoordinateOptimizer(max_passes=min(3, round_number + 1), pair_budget=36).optimize(
             target, seed, glyph_set
         )
         rendered = grid_to_image(optimized.indices, glyph_set)
         loss = reconstruction_loss(target, rendered)
+        if loss.total > current_loss.total:
+            optimized.indices = current_indices.copy()
+            optimized.iterations = 0
+            optimized.joint_replacements = 0
+            rendered, loss = current_render, current_loss
         changed = int(np.count_nonzero(optimized.indices != current_indices))
         return RefinementResponse(
             optimized_aa=grid_to_text(optimized.indices, glyph_set),
@@ -121,4 +129,8 @@ class FeedbackLoopService:
             changed_characters=changed,
             grid_width=width,
             grid_height=rows,
+            render_spec=glyph_set.spec,
+            structure_score=round(StructuralSemanticEvaluator().evaluate(VisualPlan(subject="structure"), rendered, target), 4),
+            optimization_passes=optimized.passes,
+            joint_replacements=optimized.joint_replacements,
         )

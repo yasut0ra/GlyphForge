@@ -31,10 +31,10 @@ import {
   copyPNGToClipboard,
   dataUrlToBlob,
   evaluateScreenshot,
-  prepareAAForCopy,
   requestRefinement,
-  type CopyProfile,
 } from '@/lib/aa-feedback';
+import { prepareAAForCopy, type CopyProfile, type RenderSpec } from '@/lib/render-contract';
+import sampleResult from '@/lib/sample-result.json';
 
 type Style = 'pure_ascii' | 'unicode' | 'block';
 type Detail = 'simple' | 'normal' | 'detailed';
@@ -60,6 +60,9 @@ interface Metrics {
   ssim: number;
   edge_similarity: number;
   semantic_score: number;
+  structure_score: number;
+  optimization_passes: number;
+  joint_replacements: number;
 }
 
 interface GenerationResult {
@@ -73,6 +76,10 @@ interface GenerationResult {
   grid_width: number;
   grid_height: number;
   providers: Record<string, string>;
+  render_spec: RenderSpec;
+  style: Style;
+  detail: Detail;
+  warnings: string[];
 }
 
 interface FeedbackIteration {
@@ -85,61 +92,7 @@ interface FeedbackIteration {
   summary: string;
 }
 
-const sampleOptimized = `
-           A                A
-          / \\              / \\
-         /   \\___.--.___/   \\
-        /      .-     -.      \\
-       |      /  o   o  \\      |
-       |     |     ^     |     |
-       |      \\  '-'  /      |
-        \\      '-._.-'      /
-         '._      /|\\      _.'
-            '----' | '----'            `;
-
-const sampleInitial = `
-           #                A
-          @  h            r  h
-          /    hMr     s@    [
-        @     /  i   i  \\     @
-       |     /    o o    \\     |
-       |    |      ^      |    |
-        \\    irs---sri    /
-         'A      / | \\      A'         `;
-
-const defaultResult: GenerationResult = {
-  plan: {
-    subject: 'cat',
-    composition: 'head and shoulders',
-    view: 'front',
-    important_features: ['triangular ears', 'round eyes', 'whiskers', 'small nose'],
-    style: 'crisp monochrome line art optimized for printable ASCII glyphs',
-    width: 40,
-  },
-  initial_aa: sampleInitial,
-  optimized_aa: sampleOptimized,
-  reference_image: '/sample-reference.png',
-  initial_preview: '/sample-aa-initial.png',
-  optimized_preview: '/sample-aa-optimized.png',
-  metrics: {
-    initial_reconstruction_loss: 0.02873,
-    optimized_reconstruction_loss: 0.027339,
-    optimization_iterations: 54,
-    optimization_evaluations: 8850,
-    generation_time_ms: 2333,
-    number_of_characters: 720,
-    ssim: 0.1309,
-    edge_similarity: 0.9738,
-    semantic_score: 0.82,
-  },
-  grid_width: 40,
-  grid_height: 18,
-  providers: {
-    planner: 'local heuristic planner',
-    image: 'offline procedural line art',
-    semantic: 'structural proxy evaluator',
-  },
-};
+const defaultResult = sampleResult as GenerationResult;
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
@@ -159,7 +112,7 @@ function feedbackScore(
   ssim: number,
   edgeSimilarity: number,
 ) {
-  const reconstruction = Math.max(0, 1 - Math.min(1, reconstructionLoss * 4));
+  const reconstruction = 1 / (1 + Math.max(0, reconstructionLoss));
   return (
     0.55 * objectiveScore +
     0.2 * edgeSimilarity +
@@ -177,7 +130,7 @@ export default function Home() {
   const [result, setResult] = useState<GenerationResult>(defaultResult);
   const [outputView, setOutputView] = useState<OutputView>('optimized');
   const [previewView, setPreviewView] = useState<PreviewView>('reference');
-  const [copyProfile, setCopyProfile] = useState<CopyProfile>('notes_docs');
+  const [copyProfile, setCopyProfile] = useState<CopyProfile>('monospace');
   const [loading, setLoading] = useState(false);
   const [improving, setImproving] = useState(false);
   const [error, setError] = useState('');
@@ -189,7 +142,8 @@ export default function Home() {
   const aaOutput = useRef<HTMLPreElement>(null);
 
   const sourceAA = outputView === 'optimized' ? result.optimized_aa : result.initial_aa;
-  const shownAA = prepareAAForCopy(sourceAA, copyProfile);
+  const shownAA = prepareAAForCopy(sourceAA);
+  const spec = result.render_spec;
   const copyWidth = Math.max(0, ...shownAA.split('\n').map((line) => line.length));
   const copyHeight = shownAA.length > 0 ? shownAA.split('\n').length : 0;
   const shownPreview = previewView === 'reference'
@@ -197,7 +151,7 @@ export default function Home() {
     : outputView === 'optimized'
       ? result.optimized_preview
       : result.initial_preview;
-  const score = Math.round(result.metrics.semantic_score * 100);
+  const score = Math.round(result.metrics.structure_score * 100);
   const improvement = result.metrics.initial_reconstruction_loss > 0
     ? ((result.metrics.initial_reconstruction_loss - result.metrics.optimized_reconstruction_loss) /
       result.metrics.initial_reconstruction_loss) * 100
@@ -227,6 +181,7 @@ export default function Home() {
     body.set('width', String(width));
     body.set('style', style);
     body.set('detail', detail);
+    body.set('render_profile', copyProfile);
     if (file) body.set('image', file);
 
     try {
@@ -249,7 +204,7 @@ export default function Home() {
 
   async function copyAA() {
     try {
-      await copyAAWithMonospaceFormatting(shownAA, copyProfile);
+      await copyAAWithMonospaceFormatting(shownAA, spec);
       setCopied('aa');
       window.setTimeout(() => setCopied(null), 1800);
     } catch {
@@ -260,7 +215,7 @@ export default function Home() {
   async function copyPNG() {
     if (!aaOutput.current) return;
     try {
-      const capture = await captureBrowserAA(shownAA, aaOutput.current);
+      const capture = await captureBrowserAA(shownAA, aaOutput.current, spec);
       await copyPNGToClipboard(capture.blob);
       setCopied('png');
       window.setTimeout(() => setCopied(null), 1800);
@@ -283,8 +238,9 @@ export default function Home() {
       const reference = await dataUrlToBlob(result.reference_image);
       let best = result;
       let capture = await captureBrowserAA(
-        prepareAAForCopy(best.optimized_aa, copyProfile),
+        best.optimized_aa,
         aaOutput.current,
+        best.render_spec,
       );
       let evaluated = await evaluateScreenshot(API_URL, best.plan, capture.blob, reference);
       let bestFeedback = evaluated.evaluation;
@@ -306,19 +262,21 @@ export default function Home() {
       setFeedbackIterations([...history]);
 
       for (let round = 1; round <= 2; round += 1) {
-        setImprovementStatus(`スクリーンショット評価から改善中 ${round}/2`);
+        setImprovementStatus(`Canvas描画を評価して改善中 ${round}/2`);
         const candidate = await requestRefinement(API_URL, {
           aa: best.optimized_aa,
           width: best.grid_width,
-          style,
-          detail,
+          style: best.style,
+          detail: best.detail,
+          renderProfile: best.render_spec.profile,
           roundNumber: round,
           feedback: bestFeedback,
           reference,
         });
         capture = await captureBrowserAA(
-          prepareAAForCopy(candidate.optimized_aa, copyProfile),
+          candidate.optimized_aa,
           aaOutput.current,
+          candidate.render_spec,
         );
         evaluated = await evaluateScreenshot(API_URL, best.plan, capture.blob, reference);
         const candidateScore = feedbackScore(
@@ -352,7 +310,7 @@ export default function Home() {
             optimized_aa: candidate.optimized_aa,
             optimized_preview: candidate.optimized_preview,
             grid_height: candidate.grid_height,
-            providers: { ...best.providers, semantic: evaluated.evaluator },
+            render_spec: candidate.render_spec,
             metrics: {
               ...best.metrics,
               optimized_reconstruction_loss: candidate.reconstruction_loss,
@@ -362,7 +320,9 @@ export default function Home() {
                 best.metrics.optimization_evaluations + candidate.optimization_evaluations,
               ssim: candidate.ssim,
               edge_similarity: candidate.edge_similarity,
-              semantic_score: evaluated.evaluation.overall_score,
+              structure_score: candidate.structure_score,
+              optimization_passes: best.metrics.optimization_passes + candidate.optimization_passes,
+              joint_replacements: best.metrics.joint_replacements + candidate.joint_replacements,
             },
           };
           setResult(best);
@@ -373,10 +333,10 @@ export default function Home() {
       setImprovementStatus(
         acceptedCount > 0
           ? `${acceptedCount}回の改善を採用しました`
-          : '最高スコアを維持しました（悪化候補は不採用）',
+          : '現在の結果を維持しました（採用条件を満たす変更なし）',
       );
     } catch (reason) {
-      const message = reason instanceof Error ? reason.message : 'スクリーンショット改善に失敗しました。';
+      const message = reason instanceof Error ? reason.message : '描画評価による改善に失敗しました。';
       setError(message);
       setImprovementStatus('');
     } finally {
@@ -398,9 +358,9 @@ export default function Home() {
         </div>
         <div className="hidden items-center gap-2 md:flex">
           <Badge variant="outline" className="rounded-md font-mono text-[10px] uppercase tracking-wider">
-            <span className="size-1.5 rounded-full bg-emerald-500" /> Local engine
+            <span className="size-1.5 rounded-full bg-emerald-500" /> {hasGenerated ? result.providers.planner : 'Sample'}
           </Badge>
-          <span className="text-xs text-muted-foreground">v0.1 MVP</span>
+          <span className="text-xs text-muted-foreground">v0.2 renderer</span>
         </div>
       </header>
 
@@ -415,6 +375,7 @@ export default function Home() {
           </div>
 
           <form className="space-y-5" onSubmit={generate}>
+            <fieldset disabled={loading || improving} className="min-w-0 space-y-5">
             <label className="control-group" htmlFor="prompt">
               <span className="control-label">プロンプト</span>
               <Textarea
@@ -500,7 +461,16 @@ export default function Home() {
               </p>
             )}
 
-            <Button type="submit" size="lg" disabled={loading} className="h-11 w-full justify-between px-4 shadow-[3px_3px_0_var(--ink)]">
+            <label className="control-group">
+              <span className="control-label">貼り付け先の行間</span>
+              <NativeSelect aria-label="貼り付け先プロファイル" value={copyProfile} onChange={(event) => setCopyProfile(event.target.value as CopyProfile)}>
+                <NativeSelectOption value="monospace">Code / Terminal · 標準</NativeSelectOption>
+                <NativeSelectOption value="notes_docs">Notes / Docs · 広め</NativeSelectOption>
+              </NativeSelect>
+              <span className="text-xs leading-relaxed text-muted-foreground">生成前に選択します。貼り付け先も等幅フォント・折り返しなしで表示してください。</span>
+              {hasGenerated && copyProfile !== spec.profile && <span className="text-xs text-secondary">変更した行間は次の生成から適用されます。</span>}
+            </label>
+            <Button type="submit" size="lg" disabled={loading || improving} className="h-11 w-full justify-between px-4 shadow-[3px_3px_0_var(--ink)]">
               <span className="flex items-center gap-2">
                 {loading ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
                 {loading ? '輪郭を最適化中…' : 'AAを生成'}
@@ -508,6 +478,7 @@ export default function Home() {
               <ArrowRight className="size-4" />
             </Button>
             <p className="text-center text-[10px] leading-relaxed text-muted-foreground">画像なしの場合はAPI設定に応じて参照線画を生成。<br />APIキーなしでもオフラインデモが動作します。</p>
+            </fieldset>
           </form>
         </aside>
 
@@ -517,19 +488,10 @@ export default function Home() {
               <span className="step-chip">02</span>
               <div>
                 <h2 className="font-semibold tracking-tight">Generated output</h2>
-                <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{copyWidth} × {copyHeight} copy · {result.grid_width} × {result.grid_height} grid · {styleLabels[style]}</p>
+                <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{hasGenerated ? '' : 'Sample · '}{copyWidth} × {copyHeight} copy · {result.grid_width} × {result.grid_height} grid · {styleLabels[result.style]}</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <NativeSelect
-                aria-label="貼り付け先プロファイル"
-                value={copyProfile}
-                onChange={(event) => setCopyProfile(event.target.value as CopyProfile)}
-                className="h-8 w-36 bg-background text-[10px]"
-              >
-                <NativeSelectOption value="notes_docs">Notes / Docs</NativeSelectOption>
-                <NativeSelectOption value="monospace">Code / Terminal</NativeSelectOption>
-              </NativeSelect>
               <div className="segment-control" aria-label="出力比較">
                 <button type="button" data-active={outputView === 'initial'} onClick={() => setOutputView('initial')}>Initial</button>
                 <button type="button" data-active={outputView === 'optimized'} onClick={() => setOutputView('optimized')}>Optimized</button>
@@ -553,14 +515,14 @@ export default function Home() {
               <pre
                 ref={aaOutput}
                 className="aa-output"
-                data-copy-profile={copyProfile}
+                data-copy-profile={spec.profile}
                 aria-label={`生成された${result.plan.subject}のAA`}
-                style={{ fontSize: result.grid_width > 90 ? '6px' : result.grid_width > 60 ? '8px' : undefined }}
+                style={{ fontSize: '12px', lineHeight: spec.cell_height / spec.font_size, letterSpacing: `${(spec.cell_width - spec.font_advance) / spec.font_size}em` }}
               >{shownAA}</pre>
             </div>
             <div className="stage-footer">
               <span className="flex items-center gap-1.5"><Check className="size-3.5 text-[#75d8c7]" /> {outputView === 'optimized' ? 'Optimization complete' : 'Initial reconstruction'}</span>
-              <span>copy-ready · common margin removed</span>
+              <span>{spec.profile === 'notes_docs' ? 'Notes / Docs' : 'Code / Terminal'} · {spec.cell_width}×{spec.cell_height}</span>
             </div>
             {(loading || improving) && (
               <div className="absolute inset-0 grid place-items-center bg-[#111718]/85 backdrop-blur-[2px]">
@@ -575,8 +537,10 @@ export default function Home() {
 
           <div className="mt-4 flex items-center gap-3 rounded-lg border border-black/10 bg-white/50 px-4 py-3 text-xs text-muted-foreground">
             <Layers3 className="size-4 shrink-0 text-secondary" />
-            glyph画像の画素・エッジ方向・密度を照合し、3×3近傍で局所探索しました。
+            画面と同じフォント・行間で最適化。Copy AAは文字配置を変えずにコピーします。
           </div>
+          {result.warnings.map((warning) => <p key={warning} className="mt-2 text-xs text-muted-foreground">{warning}</p>)}
+          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">比例フォントでは空白と文字の幅が揃いません。貼り付け先で等幅フォントを選ぶか、Copy PNGを使ってください。</p>
         </section>
 
         <aside className="border-t bg-card p-5 lg:border-l lg:border-t-0 lg:p-6">
@@ -612,21 +576,23 @@ export default function Home() {
 
             <div className="metric-block">
               <div className="flex items-end justify-between">
-                <div><span className="control-label">Generation score</span><p className="mt-1 text-3xl font-semibold tracking-[-0.05em]">{score}<span className="text-base text-muted-foreground">/100</span></p></div>
+                <div><span className="control-label">Structure score</span><p className="mt-1 text-3xl font-semibold tracking-[-0.05em]">{score}<span className="text-base text-muted-foreground">/100</span></p></div>
                 <Badge className="rounded-md bg-secondary text-secondary-foreground">{improvement >= 0 ? '+' : ''}{improvement.toFixed(1)}%</Badge>
               </div>
               <Progress value={score} className="mt-4">
-                <ProgressLabel className="sr-only">Generation score</ProgressLabel>
+                <ProgressLabel className="sr-only">Structure score</ProgressLabel>
                 <ProgressValue className="sr-only" />
               </Progress>
+              <p className="mt-2 text-xs text-muted-foreground">参照画像との構造一致。対象の認識精度ではありません。</p>
             </div>
 
             <dl className="divide-y border-y text-xs">
               <div className="metric-row"><dt>Initial loss</dt><dd>{formatLoss(result.metrics.initial_reconstruction_loss)}</dd></div>
               <div className="metric-row"><dt>Optimized loss</dt><dd className="text-secondary">{formatLoss(result.metrics.optimized_reconstruction_loss)}</dd></div>
-              <div className="metric-row"><dt>Edge similarity</dt><dd>{(result.metrics.edge_similarity * 100).toFixed(2)}%</dd></div>
+              <div className="metric-row"><dt>Edge F1</dt><dd>{(result.metrics.edge_similarity * 100).toFixed(2)}%</dd></div>
               <div className="metric-row"><dt>SSIM</dt><dd>{result.metrics.ssim.toFixed(4)}</dd></div>
               <div className="metric-row"><dt>Iterations</dt><dd>{result.metrics.optimization_iterations} / {result.metrics.optimization_evaluations.toLocaleString()}</dd></div>
+              <div className="metric-row"><dt>Joint moves / passes</dt><dd>{result.metrics.joint_replacements} / {result.metrics.optimization_passes}</dd></div>
               <div className="metric-row"><dt>Generation time</dt><dd>{(result.metrics.generation_time_ms / 1000).toFixed(2)} sec</dd></div>
             </dl>
 
@@ -643,7 +609,7 @@ export default function Home() {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="control-label">Visual feedback loop</p>
-                  <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">実ブラウザ描画を評価し、最大2回だけ再探索します。</p>
+                  <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">同じ設定のCanvas描画を評価し、最大2回再探索します。貼り付け先の画面撮影ではありません。</p>
                 </div>
                 <Camera className="size-4 shrink-0 text-secondary" />
               </div>
@@ -656,7 +622,7 @@ export default function Home() {
                 onClick={improveWithScreenshot}
               >
                 {improving ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
-                {improving ? '評価・改善中…' : 'Screenshotで2回改善'}
+                {improving ? '評価・改善中…' : '描画を評価して2回改善'}
               </Button>
               {!hasGenerated && <p className="mt-2 text-center text-[9px] text-muted-foreground">まずAAを生成してください</p>}
               {improvementStatus && !improving && <p className="mt-2 text-[10px] font-medium text-secondary">{improvementStatus}</p>}

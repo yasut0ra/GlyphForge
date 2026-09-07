@@ -5,12 +5,19 @@ from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 
 def _white_canvas_fit(image: Image.Image, size: tuple[int, int]) -> Image.Image:
-    image = image.copy()
-    image.thumbnail(size, Image.Resampling.LANCZOS)
+    image = ImageOps.contain(image, size, Image.Resampling.LANCZOS)
     canvas = Image.new("L", size, 255)
     offset = ((size[0] - image.width) // 2, (size[1] - image.height) // 2)
     canvas.paste(image, offset)
     return canvas
+
+
+def canonical_reference(image: Image.Image) -> Image.Image:
+    """The exact pixels returned to the client are reused in every refinement."""
+    rgba = ImageOps.exif_transpose(image).convert("RGBA")
+    source = Image.alpha_composite(Image.new("RGBA", rgba.size, "white"), rgba).convert("RGB")
+    source.thumbnail((900, 900), Image.Resampling.LANCZOS)
+    return source
 
 
 def prepare_target(
@@ -21,7 +28,8 @@ def prepare_target(
     max_rows: int = 64,
 ) -> tuple[np.ndarray, int]:
     """Normalize contrast and fit a source to a character-aware pixel grid."""
-    source = ImageOps.exif_transpose(image).convert("L")
+    rgba = ImageOps.exif_transpose(image).convert("RGBA")
+    source = Image.alpha_composite(Image.new("RGBA", rgba.size, "white"), rgba).convert("L")
     source = ImageEnhance.Contrast(source).enhance(1.45)
     source = source.filter(ImageFilter.UnsharpMask(radius=1.1, percent=115, threshold=3))
     aspect = source.height / max(1, source.width)

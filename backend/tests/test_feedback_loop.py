@@ -64,3 +64,16 @@ def test_screenshot_evaluation_and_feedback_refinement_are_end_to_end():
     assert refined.reconstruction_loss <= refined.previous_reconstruction_loss + 1e-8
     assert refined.optimized_preview.startswith("data:image/png;base64,")
     assert refined.changed_characters >= 0
+
+
+def test_feedback_regions_follow_rectangular_aa_canvas_not_square_padding():
+    reference = Image.new("L", (384, 96), 255)
+    ImageDraw.Draw(reference).rectangle((140, 3, 240, 25), fill=0)
+    missing = Image.new("L", reference.size, 255)
+    evaluator = LocalScreenshotEvaluator()
+    assessment = evaluator.evaluate(VisualPlan(subject="top mark"), missing, reference)
+    assert assessment.regions[0].y == 0
+    assert assessment.regions[0].x == 0.3333
+    identical = evaluator.evaluate(VisualPlan(subject="top mark"), reference, reference)
+    assert identical.regions == []
+    assert identical.overall_score > assessment.overall_score

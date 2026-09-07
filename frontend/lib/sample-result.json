@@ -1,0 +1,55 @@
+{
+  "plan": {
+    "subject": "cat",
+    "composition": "head and shoulders",
+    "view": "front",
+    "important_features": [
+      "triangular ears",
+      "round eyes",
+      "whiskers",
+      "small nose"
+    ],
+    "style": "crisp monochrome line art optimized for printable ASCII glyphs",
+    "width": 40
+  },
+  "initial_aa": "                                        \n                                        \n           [h_            _r3           \n          ]   h__,<<>>,__r   [          \n         _  _rr          9s_  _         \n           #                s           \n          #  _,,_      _,,_  \\          \n         ]       s    r       ]         \n         |                    |         \n       rr}--<..,,,    _,,...>-{<r       \n         3r----..._><_,..>---<h         \n          9_rr----    .---<r_/          \n            \\_            _#            \n              9>,______,<r              \n                                        \n                                        ",
+  "optimized_aa": "                                        \n                                        \n           AM_            _MA           \n          ]   M__,<<>&,__M   [          \n         _  _>9          9s_  _         \n           #                &           \n          #  _,,_      _,,_  A          \n         ]       s    r       [         \n         [                    ]         \n       rrB-- ...,     _ ,...--{<r       \n         Mr----..._><_...>---<M         \n          M_r ----     ----r_M          \n            &_            _#            \n              9>,______,<r              \n                                        \n                                        ",
+  "reference_image": "/sample-reference.png",
+  "initial_preview": "/sample-aa-initial.png",
+  "optimized_preview": "/sample-aa-optimized.png",
+  "metrics": {
+    "initial_reconstruction_loss": 0.811981,
+    "optimized_reconstruction_loss": 0.802673,
+    "optimization_iterations": 33,
+    "optimization_evaluations": 2580,
+    "generation_time_ms": 1187,
+    "number_of_characters": 640,
+    "ssim": 0.8165,
+    "edge_similarity": 0.6711,
+    "semantic_score": 0.7511,
+    "structure_score": 0.7511,
+    "objective_version": "multiscale-v2",
+    "optimization_passes": 2,
+    "joint_replacements": 0
+  },
+  "grid_width": 40,
+  "grid_height": 16,
+  "providers": {
+    "planner": "local heuristic planner",
+    "image": "offline procedural line art",
+    "semantic": "structural proxy evaluator"
+  },
+  "render_spec": {
+    "profile": "monospace",
+    "font_family": "GlyphForge Mono",
+    "font_size": 20,
+    "font_advance": 12.041015625,
+    "cell_width": 12,
+    "cell_height": 24,
+    "baseline": 19,
+    "version": "baseline-v2"
+  },
+  "style": "pure_ascii",
+  "detail": "normal",
+  "warnings": []
+}

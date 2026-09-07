@@ -1,0 +1,12 @@
+{
+  "version": "baseline-v2",
+  "font_family": "GlyphForge Mono",
+  "font_file": "DejaVuSansMono.ttf",
+  "font_size": 20,
+  "font_advance": 12.041015625,
+  "cell_width": 12,
+  "profiles": {
+    "monospace": { "label": "Code / Terminal", "cell_height": 24, "baseline": 19 },
+    "notes_docs": { "label": "Notes / Docs (monospace)", "cell_height": 30, "baseline": 22 }
+  }
+}

@@ -1,6 +1,7 @@
 from PIL import Image, ImageDraw
+import pytest
 
-from app.models.schemas import DetailLevel, Style
+from app.models.schemas import DetailLevel, Style, RenderProfile
 from app.service import Pipeline
 
 
@@ -34,3 +35,16 @@ def test_all_styles_use_distinct_configurable_charsets():
         result = pipeline.generate("test subject", 24, style, DetailLevel.SIMPLE, image)
         used = set(result.optimized_aa.replace("\n", ""))
         assert used.issubset(set(allowed[style.value]["simple"]))
+
+
+@pytest.mark.parametrize("width,style,detail,profile", [
+    (60, Style.UNICODE, DetailLevel.DETAILED, RenderProfile.NOTES_DOCS),
+    (80, Style.BLOCK, DetailLevel.NORMAL, RenderProfile.MONOSPACE),
+])
+def test_wider_grids_preserve_profile_and_improve_loss(width, style, detail, profile):
+    pipeline = Pipeline.default()
+    result = pipeline.generate("猫の顔", width, style, detail, sample_line_art(), profile)
+    assert all(len(line) == width for line in result.optimized_aa.splitlines())
+    assert result.render_spec.profile == profile
+    assert result.metrics.optimized_reconstruction_loss <= result.metrics.initial_reconstruction_loss
+    assert set(result.optimized_aa.replace("\n", "")) <= set(pipeline.glyphs.get(style, detail, profile).chars)

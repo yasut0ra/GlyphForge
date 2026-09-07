@@ -13,9 +13,10 @@ class LossBreakdown:
     pixel: float
     edge: float
     orientation: float
+    shape: float = 0.0
 
 
-def reconstruction_loss(target: np.ndarray, rendered: np.ndarray) -> LossBreakdown:
+def legacy_reconstruction_loss(target: np.ndarray, rendered: np.ndarray) -> LossBreakdown:
     pixel = float(np.mean((target - rendered) ** 2))
     _, _, target_edge = gradients(target)
     _, _, rendered_edge = gradients(rendered)
@@ -25,3 +26,8 @@ def reconstruction_loss(target: np.ndarray, rendered: np.ndarray) -> LossBreakdo
     orientation = float(np.mean((target_orientation - rendered_orientation) ** 2))
     total = 0.58 * pixel + 0.30 * edge + 0.12 * orientation
     return LossBreakdown(total=total, pixel=pixel, edge=edge, orientation=orientation)
+
+
+def reconstruction_loss(target: np.ndarray, rendered: np.ndarray) -> LossBreakdown:
+    from app.renderer.multiscale import MultiscaleObjective
+    return MultiscaleObjective(target).evaluate(rendered)

@@ -14,6 +14,9 @@ class OptimizationResult:
     indices: np.ndarray
     iterations: int
     evaluations: int
+    passes: int = 0
+    joint_replacements: int = 0
+    loss_history: tuple[float, ...] = ()
 
 
 class Optimizer(ABC):

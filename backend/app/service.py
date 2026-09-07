@@ -11,14 +11,14 @@ from app.glyphs.library import GlyphLibrary
 from app.image_generation.base import ImageGenerationProvider
 from app.image_generation.openai_provider import OpenAIImageGenerationProvider
 from app.image_generation.procedural import ProceduralReferenceProvider
-from app.models.schemas import DetailLevel, GenerationMetrics, GenerationResponse, Style
-from app.optimizer.hill_climb import HillClimbOptimizer
+from app.models.schemas import DetailLevel, GenerationMetrics, GenerationResponse, Style, RenderProfile
+from app.optimizer.coordinate import CoordinateOptimizer
 from app.planner.base import LLMProvider
 from app.planner.heuristic import HeuristicPlanner
 from app.planner.openai_provider import OpenAIPlanner
 from app.renderer.loss import reconstruction_loss
 from app.renderer.matcher import match_glyphs
-from app.renderer.preprocess import prepare_target
+from app.renderer.preprocess import prepare_target, canonical_reference
 from app.renderer.render import grid_to_image, grid_to_text, ink_array_to_data_url, pil_to_data_url
 
 
@@ -46,6 +46,7 @@ class Pipeline:
         style: Style,
         detail: DetailLevel,
         uploaded_image: Image.Image | None = None,
+        render_profile: RenderProfile = RenderProfile.MONOSPACE,
     ) -> GenerationResponse:
         started = perf_counter()
         planner = self._planner()
@@ -64,21 +65,22 @@ class Pipeline:
             except Exception:
                 active_image_provider = ProceduralReferenceProvider()
                 reference = active_image_provider.generate(plan)
-        glyph_set = self.glyphs.get(style, detail)
+        reference = canonical_reference(reference)
+        glyph_set = self.glyphs.get(style, detail, render_profile)
         target, rows = prepare_target(reference, width, glyph_set.cell_width, glyph_set.cell_height)
         initial = match_glyphs(target, glyph_set)
         initial_render = grid_to_image(initial.indices, glyph_set)
         initial_loss = reconstruction_loss(target, initial_render)
 
         pass_count = {DetailLevel.SIMPLE: 1, DetailLevel.NORMAL: 2, DetailLevel.DETAILED: 3}[detail]
-        optimized = HillClimbOptimizer(max_passes=pass_count).optimize(target, initial, glyph_set)
+        optimized = CoordinateOptimizer(max_passes=pass_count, pair_budget=36 if detail == DetailLevel.DETAILED else 0).optimize(target, initial, glyph_set)
         optimized_render = grid_to_image(optimized.indices, glyph_set)
         optimized_loss = reconstruction_loss(target, optimized_render)
-        # The optimizer scores localized 3x3 windows for speed. Retain the initial
-        # solution if accumulated local moves fail the final global objective.
+        # Numerical safeguard, independent of the optimizer implementation.
         if optimized_loss.total > initial_loss.total:
             optimized.indices = initial.indices.copy()
             optimized.iterations = 0
+            optimized.joint_replacements = 0
             optimized_render = initial_render.copy()
             optimized_loss = initial_loss
         semantic = self.evaluator.evaluate(plan, optimized_render, target)
@@ -93,6 +95,9 @@ class Pipeline:
             ssim=round(max(0.0, ssim(target, optimized_render)), 4),
             edge_similarity=round(edge_similarity(target, optimized_render), 4),
             semantic_score=round(semantic, 4),
+            structure_score=round(semantic, 4),
+            optimization_passes=optimized.passes,
+            joint_replacements=optimized.joint_replacements,
         )
         return GenerationResponse(
             plan=plan,
@@ -104,6 +109,10 @@ class Pipeline:
             metrics=metrics,
             grid_width=width,
             grid_height=rows,
+            render_spec=glyph_set.spec,
+            style=style,
+            detail=detail,
+            warnings=["選択フォントで1セルに収まらない文字を除外: " + "".join(glyph_set.excluded_chars)] if glyph_set.excluded_chars else [],
             providers={
                 "planner": planner.name,
                 "image": "uploaded image" if uploaded_image is not None else active_image_provider.name,

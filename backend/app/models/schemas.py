@@ -17,6 +17,22 @@ class DetailLevel(str, Enum):
     DETAILED = "detailed"
 
 
+class RenderProfile(str, Enum):
+    MONOSPACE = "monospace"
+    NOTES_DOCS = "notes_docs"
+
+
+class RenderSpec(BaseModel):
+    profile: RenderProfile
+    font_family: str
+    font_size: int
+    font_advance: float
+    cell_width: int
+    cell_height: int
+    baseline: int
+    version: str
+
+
 class VisualPlan(BaseModel):
     subject: str
     composition: str = "centered subject"
@@ -36,6 +52,10 @@ class GenerationMetrics(BaseModel):
     ssim: float
     edge_similarity: float
     semantic_score: float
+    structure_score: float = 0.0
+    objective_version: str = "multiscale-v2"
+    optimization_passes: int = 0
+    joint_replacements: int = 0
 
 
 class GenerationResponse(BaseModel):
@@ -49,6 +69,10 @@ class GenerationResponse(BaseModel):
     grid_width: int
     grid_height: int
     providers: dict[str, str]
+    render_spec: RenderSpec
+    style: Style
+    detail: DetailLevel
+    warnings: list[str] = Field(default_factory=list)
 
 
 class EvaluationRegion(BaseModel):
@@ -96,3 +120,7 @@ class RefinementResponse(BaseModel):
     changed_characters: int
     grid_width: int
     grid_height: int
+    render_spec: RenderSpec
+    structure_score: float = 0.0
+    optimization_passes: int = 0
+    joint_replacements: int = 0

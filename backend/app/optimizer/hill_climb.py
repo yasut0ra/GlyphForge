@@ -4,7 +4,7 @@ import numpy as np
 
 from app.glyphs.library import GlyphSet
 from app.optimizer.base import OptimizationResult, Optimizer
-from app.renderer.loss import reconstruction_loss
+from app.renderer.loss import legacy_reconstruction_loss as reconstruction_loss
 from app.renderer.matcher import InitialMatch
 from app.renderer.render import grid_to_image
 

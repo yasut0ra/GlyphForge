@@ -11,15 +11,15 @@
 
 - 自然言語をVisual Planへ変換し、LLMに最終AAを直接生成させない設計
 - glyph画像のpixel・density・edge・orientationを使った形状マッチング
-- AAを固定幅フォントで再レンダリングし、3×3近傍のhill climbingで改善
+- 同梱フォント・共通ベースラインで再描画し、複数解像度の損失と局所差分探索で改善
 - Pure ASCII / Unicode AA / Block Artを切り替え可能
 - APIキーなしでも画像アップロードとローカル参照線画でend-to-end実行可能
-- ブラウザ描画のスクリーンショット評価と最大2回のfeedback refinement
-- Notes / Docs向けのコピー縦横比補正と、崩れないPNGコピー
+- 共通描画設定のCanvas画像を評価し、最大2回のfeedback refinement
+- 貼り付け先の行間を生成前に指定し、指定幅を保ったテキストとPNGをコピー
 
 ## クイックスタート
 
-必要環境は Python 3.11+ と Node.js 22.13+ です。
+必要環境は Python 3.11+ と Node.js 22.13+ です。AA用のDejaVu Sans Monoはリポジトリに同梱しています。
 
 ```bash
 make setup
@@ -51,7 +51,7 @@ Visual Planner ── structured VisualPlan
 ImageGenerationProvider ── high-contrast reference
         │
         ▼
-preprocessing ── grayscale / contrast / character-aware resize
+render contract + preprocessing ── shared font / baseline / target profile
         │
         ▼
 GlyphLibrary ── raster patch / density / edge / orientation
@@ -63,7 +63,7 @@ initial matcher ── per-cell top-k glyph candidates
 monospace re-render ── reconstruction loss
         │
         ▼
-HillClimbOptimizer ── 1 glyph replacement in 3×3 neighborhoods
+CoordinateOptimizer ── exact local deltas / optional joint replacements
         │
         ▼
 optimized AA + rendered preview + metrics
@@ -79,72 +79,35 @@ backend/
     api/                      FastAPI routes only
     planner/                  LLMProvider + local/OpenAI planners
     image_generation/         replaceable reference-image providers
-    glyphs/                   charset config, glyph rasterization, descriptors
+    glyphs/                   shared render contract, baseline glyphs, descriptors
     renderer/                 preprocessing, matching, re-rendering, loss
-    optimizer/                Optimizer interface + hill climbing
+    optimizer/                exact-delta coordinate search / legacy comparison
     evaluator/                SemanticEvaluator + ScreenshotEvaluator（local/OpenAI）
     models/                   API schemas
     service.py                end-to-end orchestration
   config/charsets.json        style/detail-specific configurable charsets
   tests/
+  scripts/benchmark.py       offline controlled ablation
+frontend/lib/render-contract.json  Python/TypeScript共通の描画仕様
+frontend/public/fonts/       同梱AAフォントとライセンス
+docs/design-v2.md             設計判断と制約
 ```
 
 API routeには画像処理を置かず、route → pipeline service → domain modules の順に責務を分離しています。`Optimizer` は simulated annealing / genetic algorithm / MCTS / discrete diffusion へ、3つのprovider interfaceは別実装へ差し替えられます。
 
-## Algorithm
+## Algorithm (v2)
 
-### 1. Glyph rendering
+生成・表示・コピー・再評価で同じ文字配置を扱う設計へ変更しました。詳しい判断と比較条件は [設計メモ](docs/design-v2.md) を参照してください。
 
-`GlyphLibrary` は選択charsetの各文字を同じ固定幅フォント・同じ `12×22px` セルに事前レンダリングし、以下をキャッシュします。
+1. **Shared render contract**: DejaVu Sans Monoを同梱し、全glyphを共通ベースラインに配置。Code / Terminalは12×24px、Notes / Docsは12×30pxのセルを使用します。
+2. **Preprocessing**: 透明背景を白へ合成し、参照画像を正規化。指定の列数とセル比率から行数を決めます。初回生成と改善は同一の参照画像を使います。
+3. **Initial matching**: pixel、edge、位置を保つorientation、3×3/9×9平滑化画像を使って候補を作成します。Unicodeは同梱フォントの単一セルglyphに限定し、除外文字は通知します。
+4. **Optimization**: ターゲットに固定した正規化を使い、置換の影響範囲だけを再評価。局所差分は全画像のloss差分と一致し、改善する変更だけを採用します。Detailed・feedbackでは隣接2文字の同時探索も試します。
+5. **Metrics**: reconstruction loss、Edge F1、11×11 box-window SSIM、実行時間、文字数、accepted moves、passesを表示します。Structure scoreは画像との構造一致であり、意味的な認識精度ではありません。
 
-- pixel patch（inkを1、背景を0に正規化）
-- density
-- gradient edge map
-- 4方向のorientation histogram
+輪郭の少ない濃淡画像では、glyphの網点を過剰に罰しないようedge/orientationからshape/toneへ重みを移します。旧損失と新損失は尺度が違うため、数値を直接比較しないでください。
 
-そのため `/`、`\\`、`_`、`|`、括弧、罫線、ブロック文字は、単なる明るさではなく実際にレンダリングされた形で比較されます。charsetは [`backend/config/charsets.json`](backend/config/charsets.json) だけで変更できます。
-
-### 2. Image preprocessing
-
-入力をEXIF補正してグレースケール化し、contrast強調とunsharp maskを適用します。画像の縦横比とglyphセルの縦横比から行数を自動計算し、余白を白で保ったままターゲットグリッドへ収めます。
-
-### 3. Initial matching
-
-各ターゲットセルと全glyph patchを比較し、次の局所損失で最良文字と上位候補を保存します。
-
-```text
-local_loss =
-    0.54 * pixel_loss
-  + 0.23 * edge_loss
-  + 0.18 * orientation_loss
-  + 0.05 * density_loss
-```
-
-### 4. Re-render and optimization
-
-選択文字のpatchを連結してAA全体を画像へ戻し、ターゲットと比較します。
-
-```text
-reconstruction_loss =
-    0.58 * pixel_loss
-  + 0.30 * edge_loss
-  + 0.12 * orientation_loss
-```
-
-初期AAの誤差が大きいセルから、上位候補への1文字置換を試します。各候補は対象セルを中心とする `3×3` セル領域で再描画・再評価し、さらに全体損失が改善した変更だけを採用します。詳細度に応じて1〜3 pass実行します。
-
-### 5. Evaluation
-
-レスポンスには次を含みます。
-
-- initial / optimized reconstruction loss
-- accepted iterations / candidate evaluations
-- generation time / character count
-- SSIM
-- edge similarity
-- structural semantic proxy score
-
-`SemanticEvaluator` は現在API不要のstructure proxyです。VLMやvision encoderを使う実装に差し替えられるinterfaceを用意しています。
+`Copy AA`は外側の共通余白だけを除去し、内部空白と文字を保持します。コピー時の1.32倍列複製は廃止しました。貼り付け先でも等幅フォント・折り返しなしが必要です。Notes / Docsは広めの行間のプリセットであり、どのアプリでも書式が保持される保証はありません。画像として同じ形を共有する場合は`Copy PNG`を使用します。
 
 ## AI API設定（任意）
 
@@ -152,7 +115,7 @@ reconstruction_loss =
 cp backend/.env.example backend/.env
 ```
 
-`backend/.env` に以下を設定します。`make api` とバックエンド本体の両方がこのファイルを自動で読み込むため、`source .env` は不要です。
+`backend/.env` に以下を設定します。バックエンド本体がこのファイルを自動で読み込むため、`make api`で起動すれば`source .env`は不要です。
 
 ```dotenv
 OPENAI_API_KEY=...
@@ -176,12 +139,14 @@ FastAPIの対話ドキュメントは `http://localhost:8000/docs` です。
 ```text
 GET  /api/health
 POST /api/plan       multipart: prompt, width, style, detail
-POST /api/generate   multipart: prompt, width, style, detail, image?
+POST /api/generate   multipart: prompt, width, style, detail, render_profile?, image?
 POST /api/evaluate-screenshot  multipart: plan, screenshot, reference
-POST /api/refine               multipart: aa, width, style, detail, round_number, feedback, reference
+POST /api/refine               multipart: aa, width, style, detail, render_profile?, round_number, feedback, reference
 ```
 
 `style` は `pure_ascii | unicode | block`、`detail` は `simple | normal | detailed` です。幅は20〜120文字、画像は12MBまでです。
+
+`render_profile` は `monospace`（既定）または `notes_docs`。レスポンスの `render_spec` と `style` / `detail` を保持し、改善時も同じ値を送信してください。v1で生成した文字列は行数やcharsetが異なるため、v2で再生成してください。
 
 ```bash
 curl -X POST http://localhost:8000/api/generate \
@@ -195,23 +160,24 @@ curl -X POST http://localhost:8000/api/generate \
 
 ```bash
 make test
+cd frontend && npm run lint
+cd ..
 make build
+make benchmark
 ```
 
-テストは幅保持、charset制約、画像→AA→画像、最適化後lossが初期loss以下であることを検証します。
+テストは共通ベースライン、幅・charset制約、透明画像、局所差分と全体lossの一致、空白への崩壊防止、コピーの空白保持、API経由の生成・改善を検証します。外部AI APIは呼びません。
 
-UIの「Screenshotで2回改善」は、baselineを評価した後、問題領域を優先したglyph候補拡張と局所探索を最大2回行います。各候補をブラウザで再キャプチャし、reconstruction lossが改善し、再現可能なbrowser構造評価・edge・SSIMの複合スコアが許容範囲内にある候補だけを採用します。VLMの絶対スコアは候補間で揺れる可能性があるため、意味的な指摘と重点領域の決定に使い、採否判定とは分離しています。
+ベンチマークは幅40の12条件で、同じフォント・参照画像の下で旧matcher/loss/searchと新方式を比較します。`work/benchmark-v2/`へ数値と比較画像を出力します。実測値と限界は [比較レポート](docs/benchmark-v2.md)、設計判断は [設計メモ](docs/design-v2.md) に記載しています。
 
-`Copy AA` はプレーンテキストと、Menlo系等幅フォント・空白保持を指定したリッチテキストを同時にクリップボードへ入れます。NotesなどHTML貼り付けに対応するアプリではリッチ版が使われます。書式を保持しない貼り付け先ではASCII Artの文字配置を保証できないため、同じ見た目を確実に共有したい場合は `Copy PNG` を使います。
-
-コピー先プロファイルは `Notes / Docs` と `Code / Terminal` を切り替えられます。Notes系は一般的なコード表示より文字セルの横幅÷行高が小さいため、横方向の文字列を1.32倍へ離散リサンプリングして補正します。中央のGenerated outputも選択プロファイルのセル比率を再現するため、コピー後の縦横比を事前確認できます。
+UIの「描画を評価して2回改善」は、baselineを評価した後、問題領域を優先したglyph候補拡張と局所探索を最大2回行います。各候補を同じ設定でCanvasに再描画し、reconstruction lossが改善し、再現可能な構造評価・edge・SSIMの複合スコアが許容範囲内にある候補だけを採用します。DOMや貼り付け先の実画面を撮影する機能ではありません。VLMの絶対スコアは候補間で揺れる可能性があるため、意味的な指摘と重点領域の決定に使い、採否判定とは分離しています。
 
 ## MVPの制約と今後の改善
 
-- glyph patchは現在単一フォントです。Unicodeの表示幅・font fallbackを厳密に扱うには、ブラウザとバックエンドで同一のWeb fontを同梱し、wcwidth検証を追加します。
-- SSIMはMVP向けのglobal approximationです。OpenCV/scikit-imageによるwindowed SSIMへ交換できます。
+- 外部アプリの比例フォント、font fallback、空白除去や折り返しはプレーンテキストから制御できません。アプリ内でもPillowとブラウザのアンチエイリアスには差があります。
+- SSIMはbox-window版です。標準的なGaussian-window版との差があり、背景の多い画像では高く出るため、Edge F1や実際の見た目と併せて評価します。
 - initial matchingをlandmark-awareにし、顔・目・輪郭の重みを別々に最適化できます。
-- 3×3 coordinate searchをbeam search、simulated annealing、genetic algorithm、MCTS、discrete diffusionへ拡張できます。
+- 評価用の被写体・幅・貼り付け先を増やし、人間による品質比較を追加する必要があります。隣接文字の同時探索は拡張ポイントですが、今回の通常線画では追加効果を確認できていません。
 - CLIP/SigLIP/VLM evaluator、aesthetic model、complexity penaltyを統合し、複数目的Pareto探索にできます。
 - glyph間の連結性、左右対称prior、負の空間、行間をglobal constraintsとして追加できます。
 - 生成結果の保存、seed固定、custom charset編集、複数候補比較は次のUI拡張候補です。
@@ -222,4 +188,4 @@ UIの「Screenshotで2回改善」は、baselineを評価した後、問題領�
 
 ## License
 
-[MIT License](LICENSE)
+[MIT License](LICENSE)。同梱フォントは [DejaVuのライセンス](frontend/public/fonts/LICENSE-DejaVu.txt) に従います。

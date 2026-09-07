@@ -2,6 +2,17 @@
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
 
+@font-face {
+  font-family: 'GlyphForge Mono';
+  src: url('/fonts/DejaVuSansMono.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+  ascent-override: 95%;
+  descent-override: 25%;
+  line-gap-override: 0%;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -103,8 +114,7 @@ body {
 .stage-footer { border-top-width: 1px; font: 500 10px var(--font-geist-mono); }
 .traffic { display: block; width: 8px; height: 8px; border-radius: 999px; }
 .aa-viewport { display: flex; min-height: 432px; align-items: center; overflow: auto; padding: 32px 20px; }
-.aa-output { width: max-content; min-width: max-content; margin: auto; color: #ecf4ef; font-family: Menlo, Monaco, Consolas, 'DejaVu Sans Mono', monospace; font-size: clamp(9px, .86vw, 13px); font-weight: 400; font-variant-ligatures: none; font-feature-settings: 'liga' 0, 'calt' 0; line-height: 1.2222; letter-spacing: .064em; text-align: left; text-shadow: 0 0 16px rgb(117 216 199 / 12%); white-space: pre; }
-.aa-output[data-copy-profile='notes_docs'] { line-height: 1.45; letter-spacing: 0; }
+.aa-output { width: max-content; min-width: max-content; margin: auto; color: #ecf4ef; font-family: 'GlyphForge Mono', monospace; font-size: 12px; font-weight: 400; font-synthesis: none; font-kerning: none; font-variant-ligatures: none; font-feature-settings: 'liga' 0, 'calt' 0, 'kern' 0; line-height: 1.2; text-align: left; white-space: pre; }
 .checkerboard { background-color: #f7f4ed; background-image: linear-gradient(45deg,#e4dfd5 25%,transparent 25%),linear-gradient(-45deg,#e4dfd5 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#e4dfd5 75%),linear-gradient(-45deg,transparent 75%,#e4dfd5 75%); background-size: 16px 16px; background-position: 0 0,0 8px,8px -8px,-8px 0; }
 .metric-block { border-left: 3px solid var(--primary); padding: 2px 0 2px 14px; }
 .metric-row { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; }

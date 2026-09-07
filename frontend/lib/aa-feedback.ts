@@ -1,3 +1,5 @@
+import { copyHTML, type RenderSpec } from './render-contract';
+
 export interface EvaluationRegion {
   x: number;
   y: number;
@@ -37,6 +39,10 @@ export interface RefinementResponse {
   changed_characters: number;
   grid_width: number;
   grid_height: number;
+  render_spec: RenderSpec;
+  structure_score: number;
+  optimization_passes: number;
+  joint_replacements: number;
 }
 
 export interface BrowserCapture {
@@ -44,67 +50,11 @@ export interface BrowserCapture {
   dataUrl: string;
 }
 
-export type CopyProfile = 'notes_docs' | 'monospace';
-
-export function normalizeAAForCopy(value: string): string {
-  const lines = value.replaceAll('\r\n', '\n').split('\n');
-  while (lines.length > 0 && lines[0].trim().length === 0) lines.shift();
-  while (lines.length > 0 && lines.at(-1)?.trim().length === 0) lines.pop();
-  const contentLines = lines.filter((line) => line.trim().length > 0);
-  const commonIndent = contentLines.length > 0
-    ? Math.min(...contentLines.map((line) => line.match(/^ */)?.[0].length ?? 0))
-    : 0;
-  return lines.map((line) => line.slice(commonIndent).trimEnd()).join('\n');
-}
-
-export function prepareAAForCopy(value: string, profile: CopyProfile): string {
-  const normalized = normalizeAAForCopy(value);
-  if (profile === 'monospace' || normalized.length === 0) return normalized;
-
-  // Notes/Docs commonly render a monospace advance around 0.41× line-height,
-  // while the optimizer uses 12/22 ≈ 0.545. Nearest-neighbor column expansion
-  // preserves the source grid when the destination's cells are narrower.
-  const scale = 1.32;
-  const lines = normalized.split('\n');
-  const sourceWidth = Math.max(...lines.map((line) => Array.from(line).length));
-  const targetWidth = Math.max(1, Math.round(sourceWidth * scale));
-  return lines.map((line) => {
-    const source = Array.from(line.padEnd(sourceWidth, ' '));
-    let expanded = '';
-    for (let column = 0; column < targetWidth; column += 1) {
-      expanded += source[Math.min(sourceWidth - 1, Math.floor(column / scale))];
-    }
-    return expanded.trimEnd();
-  }).join('\n');
-}
-
-function escapeHTML(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#039;');
-}
-
 export async function copyAAWithMonospaceFormatting(
   value: string,
-  profile: CopyProfile,
+  spec: RenderSpec,
 ): Promise<'rich' | 'plain'> {
-  const richContent = escapeHTML(value)
-    .replaceAll(' ', '&nbsp;')
-    .replaceAll('\n', '<br>');
-  const typography = profile === 'notes_docs'
-    ? 'line-height:1.45;letter-spacing:0;'
-    : 'line-height:1.2222;letter-spacing:.064em;';
-  const html = [
-    '<div style="',
-    "margin:0;white-space:pre;font-family:Menlo,Monaco,Consolas,'DejaVu Sans Mono',monospace;",
-    `font-size:12px;font-weight:400;${typography}`,
-    '">',
-    richContent,
-    '</div>',
-  ].join('');
+  const html = copyHTML(value, spec);
   if (navigator.clipboard.write && typeof ClipboardItem !== 'undefined') {
     try {
       await navigator.clipboard.write([
@@ -115,7 +65,7 @@ export async function copyAAWithMonospaceFormatting(
       ]);
       return 'rich';
     } catch {
-      // Fall through to the legacy copy event, which still supports text/html.
+      // Fall back to plain text if rich clipboard writing is unavailable.
     }
   }
   await navigator.clipboard.writeText(value);
@@ -141,21 +91,18 @@ function canvasBlob(canvas: HTMLCanvasElement): Promise<Blob> {
 export async function captureBrowserAA(
   aa: string,
   sourceElement: HTMLElement,
+  spec: RenderSpec,
 ): Promise<BrowserCapture> {
+  await document.fonts.load(`${spec.font_size}px "${spec.font_family}"`);
   await document.fonts.ready;
   const computed = window.getComputedStyle(sourceElement);
   const fontSize = Number.parseFloat(computed.fontSize) || 12;
-  const parsedLineHeight = Number.parseFloat(computed.lineHeight);
-  const lineHeight = Number.isFinite(parsedLineHeight) ? parsedLineHeight : fontSize * 1.18;
+  const lineHeight = fontSize * spec.cell_height / spec.font_size;
+  const advance = fontSize * spec.cell_width / spec.font_size;
   const font = `${computed.fontWeight} ${fontSize}px ${computed.fontFamily}`;
   const lines = aa.split('\n');
-  const measuring = document.createElement('canvas').getContext('2d');
-  if (!measuring) throw new Error('Canvasを初期化できませんでした。');
-  measuring.font = font;
-  const textWidth = Math.max(1, ...lines.map((line) => measuring.measureText(line || ' ').width));
-  const padding = Math.max(16, Math.ceil(fontSize * 1.5));
-  const cssWidth = Math.ceil(textWidth + padding * 2);
-  const cssHeight = Math.ceil(lines.length * lineHeight + padding * 2);
+  const cssWidth = Math.max(1, Math.ceil(Math.max(...lines.map((line) => Array.from(line).length)) * advance));
+  const cssHeight = Math.max(1, Math.ceil(lines.length * lineHeight));
   const scale = Math.min(2, window.devicePixelRatio || 1);
   const canvas = document.createElement('canvas');
   canvas.width = Math.ceil(cssWidth * scale);
@@ -167,9 +114,12 @@ export async function captureBrowserAA(
   context.fillRect(0, 0, cssWidth, cssHeight);
   context.font = font;
   context.textAlign = 'left';
-  context.textBaseline = 'top';
+  context.textBaseline = 'alphabetic';
+  context.fontKerning = 'none';
   context.fillStyle = '#111718';
-  lines.forEach((line, index) => context.fillText(line, padding, padding + index * lineHeight));
+  lines.forEach((line, row) => Array.from(line).forEach((char, col) => {
+    context.fillText(char, col * advance, row * lineHeight + fontSize * spec.baseline / spec.font_size);
+  }));
   return { blob: await canvasBlob(canvas), dataUrl: canvas.toDataURL('image/png') };
 }
 
@@ -205,6 +155,7 @@ export async function requestRefinement(
     roundNumber: number;
     feedback: ScreenshotAssessment;
     reference: Blob;
+    renderProfile: RenderSpec['profile'];
   },
 ): Promise<RefinementResponse> {
   const body = new FormData();
@@ -212,6 +163,7 @@ export async function requestRefinement(
   body.set('width', String(input.width));
   body.set('style', input.style);
   body.set('detail', input.detail);
+  body.set('render_profile', input.renderProfile);
   body.set('round_number', String(input.roundNumber));
   body.set('feedback', JSON.stringify(input.feedback));
   body.set('reference', input.reference, 'reference.png');

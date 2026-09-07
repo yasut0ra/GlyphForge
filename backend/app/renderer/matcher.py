@@ -25,7 +25,13 @@ def _cell_feature_loss(cell: np.ndarray, glyphs: GlyphSet) -> np.ndarray:
     return 0.54 * pixel_loss + 0.23 * edge_loss + 0.18 * orientation_loss + 0.05 * density_loss
 
 
-def match_glyphs(target: np.ndarray, glyphs: GlyphSet, candidate_count: int = 7) -> InitialMatch:
+def _shape_feature_loss(cell: np.ndarray, glyphs: GlyphSet) -> np.ndarray:
+    from app.renderer.multiscale import MultiscaleObjective
+    objective = MultiscaleObjective(cell)
+    return np.asarray([objective.evaluate(patch).total for patch in glyphs.patches])
+
+
+def match_glyphs(target: np.ndarray, glyphs: GlyphSet, candidate_count: int = 7, *, legacy: bool = False) -> InitialMatch:
     rows = target.shape[0] // glyphs.cell_height
     cols = target.shape[1] // glyphs.cell_width
     indices = np.zeros((rows, cols), dtype=np.int16)
@@ -36,7 +42,10 @@ def match_glyphs(target: np.ndarray, glyphs: GlyphSet, candidate_count: int = 7)
         for col in range(cols):
             x = col * glyphs.cell_width
             cell = target[y : y + glyphs.cell_height, x : x + glyphs.cell_width]
-            cell_loss = _cell_feature_loss(cell, glyphs)
+            if float(cell.max()) < 1e-5:
+                cell_loss = glyphs.densities.copy()
+            else:
+                cell_loss = _cell_feature_loss(cell, glyphs) if legacy else _shape_feature_loss(cell, glyphs)
             ordered = np.argsort(cell_loss)[: candidates.shape[2]]
             candidates[row, col] = ordered
             indices[row, col] = ordered[0]
